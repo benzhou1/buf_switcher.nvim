@@ -1,7 +1,21 @@
 local uv = vim.loop or vim.uv
 local utils = require("buf_switcher.utils")
 local autocmd_group = "BufSwitcher"
+
 local M = {
+  ---@class bufSwitcher.Config.Keymaps
+  ---@field enabled boolean? Enable auto mapping of keys
+  ---@field prev_key string? Keybind to use for switching to previous buffer
+  ---@field next_key string? Keybind to use for switching to next buffer
+
+  ---@class bufSwitcher.Config
+  ---@field timeout integer? Milliseconds to keep popup open before selecting the current buffer to open
+  ---@field filename_hl string? Highlight group for filename
+  ---@field dirname_hl string? Highlight group for dirname
+  ---@field lnum_hl string? Highlight group for line number
+  ---@field current_buf_hl? string Highlight group for currently selected line in popup
+  ---@field keymaps bufSwitcher.Config.Keymaps? Configure keymaps
+  ---@field popup_opts table? Options for nui popup buffer
   config = {
     timeout = 1000,
     current_buf_hl = "Visual",
@@ -169,25 +183,17 @@ local function initialize_popup()
   vim.fn.win_execute(vim.fn.bufwinid(M.popup.bufnr), tostring(M.bufs.idx))
 end
 
----@class bufSwitcher.Config
----@field timeout integer? Milliseconds to keep popup open and refresh recent buffer list
----@field filename_hl string? Highlight group for filename
----@field dirname_hl string? Highlight group for dirname
----@field lnum_hl string? Highlight group for line number
----@field current_buf_hl? string Highlight group for current buffers
----@field prev_key string? Keybind to use for switching to previous buffer
----@field next_key string? Keybind to use for switching to next buffer
----@field popup_opts table? Keybind to use for switching to next buffer
-
 --- Setup keymaps and user nvim_create_user_command
 ---@param opts bufSwitcher.Config
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("keep", opts, M.config)
-  if M.config.prev_key then
-    vim.keymap.set("n", M.config.prev_key, M.prev_file)
-  end
-  if M.config.next_key then
-    vim.keymap.set("n", M.config.next_key, M.next_file)
+  if M.config.keymaps.enabled then
+    if M.config.keymaps.prev_key then
+      vim.keymap.set({ "n", "x", "v" }, M.config.keymaps.prev_key, M.prev_file)
+    end
+    if M.config.keymaps.next_key then
+      vim.keymap.set({ "n", "x", "v" }, M.config.keymaps.next_key, M.next_file)
+    end
   end
 
   vim.api.nvim_create_user_command("BufSwitcherNext", M.next_file, { nargs = 0 })
