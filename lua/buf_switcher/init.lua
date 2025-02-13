@@ -325,7 +325,15 @@ local function switch(get_buf)
   -- Show the preview buffer
   vim.api.nvim_set_current_buf(preview_buf)
   -- Move cursor to the line number
-  vim.cmd(tostring(target_buf.lnum))
+  -- no autocmds should be triggered. So LSP's etc won't try to attach in the preview
+  utils.noautocmd(function()
+    if pcall(vim.api.nvim_win_set_cursor, 0, { target_buf.lnum, 0 }) then
+      vim.api.nvim_win_call(0, function()
+        vim.cmd("norm! zzzv")
+      end)
+    end
+  end)
+  -- vim.cmd(tostring(target_buf.lnum))
 
   -- Show popup
   initialize_popup()
