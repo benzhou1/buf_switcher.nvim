@@ -15,9 +15,11 @@ local M = {
   ---@field lnum_hl string? Highlight group for line number
   ---@field current_buf_hl? string Highlight group for currently selected line in popup
   ---@field keymaps bufSwitcher.Config.Keymaps? Configure keymaps
+  ---@field center_preview boolean? Whether the screen should be centered when showing preview buffer
   ---@field popup_opts table? Options for nui popup buffer
   config = {
     timeout = 1000,
+    center_preview = true,
     current_buf_hl = "Visual",
     filename_hl = "Normal",
     dirname_hl = "Comment",
@@ -37,10 +39,10 @@ local M = {
           top_align = "left",
         },
       },
-      relative = "cursor",
+      relative = "editor",
       position = {
-        row = 1,
-        col = 50,
+        row = "50%",
+        col = "70%",
       },
       size = {
         width = 50,
@@ -144,7 +146,6 @@ local function initialize_popup()
     end)
     M.popup:mount()
   end
-  M.popup:update_layout(M.config.popup_opts)
 
   local current_idx = M.bufs.idx
   for idx, buf in ipairs(M.bufs.list) do
@@ -334,9 +335,11 @@ local function switch(get_buf)
   -- no autocmds should be triggered. So LSP's etc won't try to attach in the preview
   utils.noautocmd(function()
     if pcall(vim.api.nvim_win_set_cursor, 0, { target_buf.lnum, 0 }) then
-      vim.api.nvim_win_call(0, function()
-        vim.cmd("norm! zzzv")
-      end)
+      if M.config.center_preview then
+        vim.api.nvim_win_call(0, function()
+          vim.cmd("norm! zzzv")
+        end)
+      end
     end
   end)
   -- vim.cmd(tostring(target_buf.lnum))
