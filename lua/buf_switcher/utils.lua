@@ -99,4 +99,12 @@ function M.get_lines(opts)
   return ret
 end
 
+--- Taken from trouble util.lua
+function M.noautocmd(fn)
+  local ei = vim.o.eventignore
+  vim.o.eventignore = "all"
+  fn()
+  vim.o.eventignore = ei
+end
+
 return M
