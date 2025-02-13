@@ -313,8 +313,10 @@ end
 local function switch(get_buf)
   -- Load existing buffers
   load_buffers()
-  -- Save current file name
-  M.bufs.prev_name = M.bufs.list[M.bufs.idx].name
+  -- Save current file name the first time opening switcher
+  if M.bufs.prev_name == nil then
+    M.bufs.prev_name = M.bufs.list[M.bufs.idx].name
+  end
 
   local target_buf = get_buf()
   -- Preview the target buffer
