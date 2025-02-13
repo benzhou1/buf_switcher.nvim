@@ -8,8 +8,11 @@ local M = {
     filename_hl = "Normal",
     dirname_hl = "Comment",
     lnum_hl = "DiagnosticInfo",
-    prev_key = "<C-S-Tab>",
-    next_key = "<C-Tab>",
+    keymaps = {
+      enabled = true,
+      prev_key = "<C-S-Tab>",
+      next_key = "<C-Tab>",
+    },
     popup_opts = {
       enter = false,
       focusable = false,
@@ -20,10 +23,10 @@ local M = {
           top_align = "left",
         },
       },
-      relative = "editor",
+      relative = "cursor",
       position = {
-        row = "50%",
-        col = "70%",
+        row = 1,
+        col = 50,
       },
       size = {
         width = 50,
@@ -127,6 +130,7 @@ local function initialize_popup()
     end)
     M.popup:mount()
   end
+  M.popup:update_layout(M.config.popup_opts)
 
   local current_idx = M.bufs.idx
   for idx, buf in ipairs(M.bufs.list) do
