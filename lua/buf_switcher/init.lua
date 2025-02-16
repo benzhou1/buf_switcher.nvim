@@ -8,6 +8,10 @@ local M = {
   ---@field prev string? Keybind to use for switching to previous buffer. Set to false to disable.
   ---@field next string? Keybind to use for switching to next buffer. Set to false to disable.
 
+  ---@class bufSwitcher.Config.Hooks
+  ---@field before_show_preview fun(preview_bufnr: integer, src_bufnr: integer)? Hook to run before showing preview buffer
+  ---@field after_show_selected fun(src_bufnr: integer, dest_bufnr: integer)? Hook to run after showing selected buffer
+
   ---@class bufSwitcher.Config
   ---@field timeout integer? Milliseconds to keep popup open before selecting the current buffer to open
   ---@field filename_hl string? Highlight group for filename
@@ -16,6 +20,7 @@ local M = {
   ---@field current_buf_hl? string Highlight group for currently selected line in popup
   ---@field keymaps bufSwitcher.Config.Keymaps? Configure keymaps
   ---@field center_preview boolean? Whether the screen should be centered when showing preview buffer
+  ---@field hooks bufSwitcher.Config.Hooks? Configure hooks
   ---@field popup_opts table? Options for nui popup buffer
   config = {
     timeout = 1000,
@@ -24,6 +29,10 @@ local M = {
     filename_hl = "Normal",
     dirname_hl = "Comment",
     lnum_hl = "DiagnosticInfo",
+    hooks = {
+      before_show_preview = nil,
+      after_show_selected = nil,
+    },
     keymaps = {
       enabled = true,
       prev = "<C-S-Tab>",
@@ -70,6 +79,10 @@ local function close_popup()
   -- Open selected buffer and move cursor to the same position
   vim.cmd("e " .. target_buf.name .. "|" .. tostring(cursor_pos[1]))
   vim.fn.setreg("#", M.bufs.prev_name)
+    if M.config.hooks.after_show_selected then
+      ---@diagnostic disable-next-line: undefined-field
+      M.config.hooks.after_show_selected(M.bufs.prev_buf.bufnr, target_buf.bufnr)
+    end
 
   -- Close the popup
   if M.popup then
@@ -229,6 +242,9 @@ local function create_preview_buf(bufinfo)
     if not pcall(vim.treesitter.start, buf, lang) then
       vim.bo[buf].syntax = ft
     end
+  end
+  if M.config.hooks.before_show_preview then
+    M.config.hooks.before_show_preview(buf, bufinfo.bufnr)
   end
   return buf
 end
