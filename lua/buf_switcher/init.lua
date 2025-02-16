@@ -62,10 +62,9 @@ local M = {
     },
   },
   bufs = {
-    prev_name = nil,
+    prev_buf = nil,
     idx = nil,
     list = nil,
-    preview_buf = nil,
   },
   popup = nil,
   timer = nil,
@@ -89,13 +88,14 @@ local function close_popup()
   -- Close the popup
   if M.popup then
     M.popup:unmount()
+    M.popup = nil
   end
   -- Clean up state
   M.popup = nil
   M.bufs.list = nil
   M.bufs.idx = nil
-  M.bufs.preview_buf = nil
-  M.bufs.prev_name = nil
+  M.bufs.prev_buf = nil
+  M.bufs.prev_win = nil
 
   -- Clean up autocmd and timer
   pcall(autocmd.delete_group, autocmd_group)
@@ -359,8 +359,12 @@ local function switch(get_buf)
   -- Load existing buffers
   load_buffers()
   -- Save current file name the first time opening switcher
-  if M.bufs.prev_name == nil then
-    M.bufs.prev_name = M.bufs.list[M.bufs.idx].name
+  if M.bufs.prev_buf == nil then
+    M.bufs.prev_buf = M.bufs.list[M.bufs.idx]
+  end
+  -- Save current window the first time opening switcher
+  if M.bufs.prev_win == nil then
+    M.bufs.prev_win = vim.api.nvim_get_current_win()
   end
 
   local target_buf = get_buf()
