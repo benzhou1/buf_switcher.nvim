@@ -415,11 +415,13 @@ local function switch(get_buf)
 end
 
 --- Open the next most recent buffer
-function M.next_file()
+---@param step? integer Move to next number of buffers. Defaults to 1.
+function M.next_buf(step)
+  step = math.max(step or 1, 1)
   switch(function()
     -- Buffer list is sorted by lastused, so the next buffer is the previous one
     -- Allow for circular buffer switching
-    local next_idx = math.max((M.bufs.idx + 1) % (#M.bufs.list + 1), 1)
+    local next_idx = math.max((M.bufs.idx + step) % (#M.bufs.list + 1), 1)
     local next_buf = M.bufs.list[next_idx]
     M.bufs.idx = next_idx
     return next_buf
@@ -427,13 +429,15 @@ function M.next_file()
 end
 
 --- Open the previous most recent buffer
-function M.prev_file()
+---@param step? integer Move to previous number of buffers. Defaults to 1.
+function M.prev_buf(step)
+  step = math.max(step or 1, 1)
   switch(function()
     -- Buffer list is sorted by lastused, so the prev buffer the next one
     -- Allow for circular buffer switching
-    local prev_idx = M.bufs.idx - 1
+    local prev_idx = M.bufs.idx - step
     if prev_idx < 1 then
-      prev_idx = #M.bufs.list
+      prev_idx = #M.bufs.list - math.abs(prev_idx)
     end
     local prev_buf = M.bufs.list[prev_idx]
     M.bufs.idx = prev_idx
