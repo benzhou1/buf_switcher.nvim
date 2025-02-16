@@ -1,162 +1,320 @@
 local uv = vim.loop or vim.uv
 local utils = require("buf_switcher.utils")
-local autocmd_group = "BufSwitcher"
 
 local M = {
-  ---@class bufSwitcher.Config.Keymaps
-  ---@field enabled boolean? Enable auto mapping of keys
-  ---@field prev string? Keybind to use for switching to previous buffer. Set to false to disable.
-  ---@field next string? Keybind to use for switching to next buffer. Set to false to disable.
-
-  ---@class bufSwitcher.Config.Hooks
-  ---@field before_show_preview fun(preview_bufnr: integer, src_bufnr: integer)? Hook to run before showing preview buffer
-  ---@field after_show_selected fun(src_bufnr: integer, dest_bufnr: integer)? Hook to run after showing selected buffer
-
-  ---@class bufSwitcher.Config
-  ---@field timeout integer? Milliseconds to keep popup open before selecting the current buffer to open. Set to 0 to disable.
-  ---@field center_preview boolean? Whether the screen should be centered when showing preview buffer
-  ---@field disable_autocmds boolean? Disable autocmds for cursor movement and text changes
-  ---@field current_buf_hl? string Highlight group for currently selected line in popup
-  ---@field filename_hl string? Highlight group for filename
-  ---@field dirname_hl string? Highlight group for dirname
-  ---@field lnum_hl string? Highlight group for line number
-  ---@field keymaps bufSwitcher.Config.Keymaps? Configure keymaps
-  ---@field hooks bufSwitcher.Config.Hooks? Configure hooks
-  ---@field popup_opts table? Options for nui popup buffer
-  config = {
-    timeout = 1000,
-    center_preview = true,
-    disable_autocmds = true,
-    current_buf_hl = "Visual",
-    filename_hl = "Normal",
-    dirname_hl = "Comment",
-    lnum_hl = "DiagnosticInfo",
-    hooks = {
-      before_show_preview = nil,
-      after_show_selected = nil,
-    },
-    keymaps = {
-      enabled = true,
-      prev = "<C-S-Tab>",
-      next = "<C-Tab>",
-    },
-    popup_opts = {
-      enter = false,
-      focusable = false,
-      border = {
-        style = "rounded",
-        text = {
-          top = "Buf Switcher",
-          top_align = "left",
-        },
-      },
-      relative = "editor",
-      position = {
-        row = "50%",
-        col = "70%",
-      },
-      size = {
-        width = 50,
-        height = 10,
-      },
-    },
-  },
-  bufs = {
+  ---@class bufSwitcher.States
+  ---@field prev_buf table? Buffer info of buffer before opening switcher
+  ---@field prev_win integer? Window id of window before opening switcher
+  ---@field preview_bufnr integer? Buffer id of preview buffer
+  ---@field cur_buf_idx integer? Index of the current buffer in the buffer list
+  ---@field buf_list table? List of buffers sorted by lastused
+  ---@field popup table? Nui popup object
+  ---@field timer table? Timer object
+  states = {
+    prev_win = nil,
     prev_buf = nil,
-    idx = nil,
-    list = nil,
+    preview_bufnr = nil,
+    cur_buf_idx = nil,
+    buf_list = nil,
+    popup = nil,
+    timer = nil,
   },
-  popup = nil,
-  timer = nil,
+  modes = {
+    preview = {
+      timeout = {
+        enabled = true,
+      },
+      preview = {
+        enabled = true,
+      },
+      popup = {
+        enter = false,
+        focusable = false,
+        map_keys = false,
+      },
+    },
+    popup = {
+      timeout = {
+        enabled = false,
+      },
+      preview = {
+        enabled = false,
+      },
+      popup = {
+        enter = true,
+        focusable = true,
+        map_keys = true,
+      },
+    },
+    timeout = {
+      timeout = {
+        enabled = true,
+        value = 300,
+      },
+      preview = {
+        enabled = false,
+      },
+      popup = {
+        enter = true,
+        focusable = true,
+        map_keys = false,
+      },
+    },
+  },
 }
 
---- Close popup and open the selected buffer
---- Cleanup state and autocmd
-local function close_popup(cb)
-  local autocmd = require("nui.utils.autocmd")
-  local target_buf = M.bufs.list[M.bufs.idx]
-  local pos = vim.api.nvim_win_get_cursor(0)
-  vim.api.nvim_win_call(M.bufs.prev_win, function()
-    vim.cmd("e " .. target_buf.name)
-    pcall(vim.api.nvim_win_set_cursor, 0, pos)
-    if M.config.hooks.after_show_selected then
-      ---@diagnostic disable-next-line: undefined-field
-      M.config.hooks.after_show_selected(M.bufs.prev_buf.bufnr, target_buf.bufnr)
-    end
+--- Do something before showing the preview buffer
+---@param opts bufSwitcher.Config.Hooks.Options
+---@diagnostic disable-next-line: unused-local
+function M.before_show_preview(opts) end
+
+--- Sets preview buffer cursor position and centers the screen
+---@param opts bufSwitcher.Config.Hooks.Options
+function M.after_show_preview(opts)
+  if M.config.preview.enabled == false then
+    return
+  end
+
+  -- Get cursor position of target buffer
+  local pos = vim.api.nvim_buf_get_mark(opts.target_buf.bufnr, '"')
+  -- Set preview to the same cursor position as target buffer
+  vim.api.nvim_win_set_cursor(opts.prev_win_id, pos)
+  -- Center the preview buffer
+  vim.api.nvim_win_call(opts.prev_win_id, function()
+    vim.cmd("norm! zzzv")
   end)
-  ---@diagnostic disable-next-line: undefined-field
-  vim.fn.setreg("#", M.bufs.prev_buf.name)
+end
+
+--- Saves the current cursor position of the preview buffer
+---@param opts bufSwitcher.Config.Hooks.Options
+---@diagnostic disable-next-line: unused-local
+function M.before_show_target(opts)
+  if M.config.preview.enabled == false then
+    return
+  end
+
+  -- Save cursor position of preview buffer
+  local pos = vim.api.nvim_win_get_cursor(M.states.prev_win)
+  ---@diagnostic disable-next-line: inject-field
+  M.states.preview_pos = pos
+end
+
+--- Restore cursor position and alternate file of target buffer
+---@param opts bufSwitcher.Config.Hooks.Options
+function M.after_show_target(opts)
+  if M.config.preview.enabled == false then
+    return
+  end
+
+  -- Set cursor position of target buffer to be the same as preview buffer
+  vim.api.nvim_win_set_cursor(opts.prev_win_id, M.states.preview_pos)
+  -- Correct alternative buffer
+  vim.fn.setreg("#", opts.prev_buf.name)
+end
+
+--- Do something after popup is shown
+---@param opts bufSwitcher.Config.Hooks.Options
+---@diagnostic disable-next-line: unused-local
+function M.after_show_popup(opts) end
+
+--- Map common keys to popup
+---@param opts bufSwitcher.Config.Hooks.Options
+function M.before_show_popup(opts)
+  if M.config.popup.map_keys == false or not M.config.popup.focusable then
+    return
+  end
+
+  opts.popup:map("n", "<cr>", function()
+    M.close_popup()
+  end)
+  opts.popup:map("n", "<esc>", function()
+    M.close_popup({ cancel = true })
+  end)
+  opts.popup:map("n", "j", function()
+    M.next_buf()
+  end)
+  opts.popup:map("n", "<down>", function()
+    M.next_buf()
+  end)
+  opts.popup:map("n", "k", function()
+    M.prev_buf()
+  end)
+  opts.popup:map("n", "<up>", function()
+    M.prev_buf()
+  end)
+end
+
+---@class bufSwitcher.Config.Timeout
+---@field enabled boolean? Enable timeout to close popup
+---@field value integer? Milliseconds to keep popup open before selecting the current buffer to open
+
+---@class bufSwitcher.Config.Preview
+---@field enabled boolean? Enable preview buffer
+
+---@class bufSwitcher.Config.Highlights
+---@field current_buf string? Highlight group for currently selected line in popup
+---@field filename string? Highlight group for filename
+---@field dirname string? Highlight group for dirname
+---@field lnum string? Highlight group for line number
+
+---@class bufSwitcher.Config.Keymaps
+---@field enabled boolean? Enable auto mapping of keys
+---@field prev string? Keybind to use for switching to previous buffer. Set to false to disable.
+---@field next string? Keybind to use for switching to next buffer. Set to false to disable.
+
+---@class bufSwitcher.Config.Hooks.Options
+---@field preview_bufnr integer? Preview buffer number, if preview is enabled
+---@field prev_win_id integer Previous window id
+---@field prev_buf table Previous buffer info
+---@field target_buf table Target buffer info
+---@field popup NuiPopup? Popup object
+
+---@class bufSwitcher.Config.Hooks
+---@field before_show_preview fun(opts: bufSwitcher.Config.Hooks.Options)? Hook to run before showing preview buffer
+---@field after_show_preview fun(opts: bufSwitcher.Config.Hooks.Options)? Hook to run before showing preview buffer
+---@field before_show_target fun(opts: bufSwitcher.Config.Hooks.Options)? Hook to run after showing target buffer
+---@field after_show_target fun(opts: bufSwitcher.Config.Hooks.Options)? Hook to run after showing target buffer
+---@field before_show_popup fun(opts: bufSwitcher.Config.Hooks.Options)? Hook to run before showing popup menu
+---@field after_show_popup fun(opts: bufSwitcher.Config.Hooks.Options)? Hook to run after showing popup menu
+
+---@class bufSwitcher.Config
+---@field timeout bufSwitcher.Config.Timeout? Describes the timeout configuration
+---@field preview bufSwitcher.Config.Preview? Describes the preview configuration
+---@field highlights bufSwitcher.Config.Highlights? Describes the highlights configuration
+---@field keymaps bufSwitcher.Config.Keymaps? Configure keymaps
+---@field hooks bufSwitcher.Config.Hooks? Configure hooks
+---@field popup table? Options for nui popup buffer
+---@field mode "preview" | "popup" | "timeout"? Pre configured modes, defaults to preview
+---| "preview" - Preview of the target buffer is shown as buffers are cycled to create a seamless switching experience.
+---   Any cursor movements or text changes will open the target buffer.
+---   After elapsed timeout the target buffer will be opened.
+---| "popup" - Preview is disabled and popup buffer list will be focused allowing you to select the buffer to open with <CR>.
+---   Buffer list can be navigated with movement keys. You must manually choose which buffer to open with no timeout.
+---| "timeout" - Same as popup, but with timeout only and no key mas. This mode resembles a switcher the most, but relies on timeout.
+---| nil - Set to nil to ignore preconfigured modes and use custom configuration.
+---@type bufSwitcher.Config
+M.config = {
+  mode = "preview",
+  timeout = {
+    enabled = true,
+    value = 1000,
+  },
+  preview = {
+    enabled = true,
+  },
+  highlights = {
+    current_buf = "Visual",
+    filename = "Normal",
+    dirname = "Comment",
+    lnum = "DiagnosticInfo",
+  },
+  hooks = {
+    before_show_preview = M.before_show_preview,
+    after_show_preview = M.after_show_preview,
+    before_show_target = M.before_show_target,
+    after_show_target = M.after_show_preview,
+    after_show_popup = M.after_show_popup,
+    before_show_popup = M.before_show_popup,
+  },
+  keymaps = {
+    enabled = true,
+    prev = "<C-S-Tab>",
+    next = "<C-Tab>",
+  },
+  popup = {
+    enter = false,
+    focusable = false,
+    map_keys = false,
+    border = {
+      style = "rounded",
+      text = {
+        top = "Buf Switcher",
+        top_align = "left",
+      },
+    },
+    relative = "editor",
+    position = {
+      row = "50%",
+      col = "70%",
+    },
+    size = {
+      width = 50,
+      height = 10,
+    },
+  },
+}
+
+--- Close popup and open the target buffer
+function M.close_popup(opts)
+  opts = opts or {}
+  local target_buf = M.states.buf_list[M.states.cur_buf_idx]
+
+  if not opts.cancel then
+    if M.config.hooks.before_show_target then
+      local _, err = pcall(M.config.hooks.before_show_target, {
+        preview_bufnr = M.states.preview_bufnr,
+        prev_win_id = M.states.prev_win,
+        prev_buf = M.states.prev_buf,
+        target_buf = target_buf.bufnr,
+      })
+      if err then
+        vim.api.nvim_err_writeln(err)
+      end
+    end
+
+    vim.api.nvim_win_call(M.states.prev_win, function()
+      -- Open target buffer
+      vim.cmd("e " .. target_buf.name)
+      if M.config.hooks.after_show_target then
+        local _, err = pcall(M.config.hooks.after_show_target, {
+          preview_bufnr = M.states.preview_bufnr,
+          prev_win_id = M.states.prev_win,
+          prev_buf = M.states.prev_buf,
+          target_buf = target_buf,
+        })
+        if err then
+          vim.api.nvim_err_writeln(err)
+        end
+      end
+    end)
+  end
 
   -- Close the popup
-  if M.popup then
-    M.popup:unmount()
-    M.popup = nil
+  if M.states.popup then
+    M.states.popup:unmount()
+    M.states.popup = nil
   end
   -- Clean up state
-  M.popup = nil
-  M.bufs.list = nil
-  M.bufs.idx = nil
-  M.bufs.prev_buf = nil
-  M.bufs.prev_win = nil
+  M.states.popup = nil
+  M.states.buf_list = nil
+  M.states.cur_buf_idx = nil
+  M.states.prev_buf = nil
+  M.states.prev_win = nil
 
-  -- Clean up autocmd and timer
-  pcall(autocmd.delete_group, autocmd_group)
   pcall(function()
-    M.timer:stop()
+    M.states.timer:stop()
   end)
 
-  if cb ~= nil then
-    cb()
+  if opts.cb ~= nil then
+    opts.cb()
   end
 end
 
---- Initlaize autocmd to close popup when cursor moves or text changes
-local function initialize_autocmd()
-  if M.config.disable_autocmds then
-    return
-  end
-
-  local autocmd = require("nui.utils.autocmd")
-  local event = require("nui.utils.autocmd").event
-
-  local i = 1
-  autocmd.create_group(autocmd_group, {})
-  -- Any action other than switching buffers means the user has finished selecting
-  autocmd.create({
-    event.CursorMoved,
-    event.CursorMovedI,
-    event.TextChanged,
-    event.TextChangedI,
-    event.TextChangedP,
-  }, {
-    group = autocmd_group,
-    callback = function()
-      -- Need to skip the first 2 event because switching to preview buffer triggers it
-      if i < 3 then
-        i = i + 1
-        return
-      end
-      close_popup()
-    end,
-  })
-end
-
---- Intialize autocmd to close popup when cursor moves
---- Initlaize a timer to close popup after a certain timeout
+--- Initialize a timer to close popup after a certain timeout
 local function initialize_timer()
-  if M.config.timeout == 0 then
+  if not M.config.timeout.enabled then
     return
   end
-  if M.timer == nil then
-    M.timer = uv.new_timer()
+  if M.states.timer == nil then
+    M.states.timer = uv.new_timer()
   end
-  M.timer:stop()
+  M.states.timer:stop()
   -- Timer to close popup after a certain timeout
-  M.timer:start(
-    M.config.timeout,
+  M.states.timer:start(
+    M.config.timeout.value,
     0,
     vim.schedule_wrap(function()
-      close_popup()
+      M.close_popup()
     end)
   )
 end
@@ -168,26 +326,53 @@ local function initialize_popup()
   local NuiLine = require("nui.line")
   local NuiText = require("nui.text")
   local event = require("nui.utils.autocmd").event
-  if M.popup == nil then
-    M.popup = Popup(M.config.popup_opts)
+  if M.states.popup == nil then
+    M.states.popup = Popup(M.config.popup)
     -- unmount component when cursor leaves buffer
-    M.popup:on(event.BufLeave, function()
-      M.popup:unmount()
-      M.popup = nil
+    M.states.popup:on(event.BufLeave, function()
+      M.states.popup:unmount()
+      M.states.popup = nil
     end)
-    M.popup:mount()
+
+    if M.config.hooks.before_show_popup then
+      local _, err = pcall(M.config.hooks.before_show_popup, {
+        preview_bufnr = M.states.preview_bufnr,
+        prev_win_id = M.states.prev_win,
+        prev_buf = M.states.prev_buf,
+        target_buf = M.states.buf_list[M.states.cur_buf_idx],
+        popup = M.states.popup,
+      })
+      if err then
+        vim.api.nvim_err_writeln(err)
+      end
+    end
+
+    M.states.popup:mount()
+
+    if M.config.hooks.after_show_popup then
+      local _, err = pcall(M.config.hooks.after_show_popup, {
+        preview_bufnr = M.states.preview_bufnr,
+        prev_win_id = M.states.prev_win,
+        prev_buf = M.states.prev_buf,
+        target_buf = M.states.buf_list[M.states.cur_buf_idx],
+        popup = M.states.popup,
+      })
+      if err then
+        vim.api.nvim_err_writeln(err)
+      end
+    end
   end
 
-  local current_idx = M.bufs.idx
-  for idx, buf in ipairs(M.bufs.list) do
+  local current_idx = M.states.cur_buf_idx
+  for idx, buf in ipairs(M.states.buf_list) do
     buf.texts = buf.texts or {}
-    local filename_hl = M.config.filename_hl
-    local lnum_hl = M.config.lnum_hl
-    local dirname_hl = M.config.dirname_hl
+    local filename_hl = M.config.highlights.filename
+    local lnum_hl = M.config.highlights.lnum
+    local dirname_hl = M.config.highlights.dirname
     if idx == current_idx then
-      filename_hl = M.config.current_buf_hl
-      lnum_hl = M.config.current_buf_hl
-      dirname_hl = M.config.current_buf_hl
+      filename_hl = M.config.highlights.current_buf
+      lnum_hl = M.config.highlights.current_buf
+      dirname_hl = M.config.highlights.current_buf
     end
 
     if buf.display_line == nil then
@@ -199,7 +384,7 @@ local function initialize_popup()
     else
       if idx == current_idx then
         for _, text in ipairs(buf.texts) do
-          text:set(text:content(), M.config.current_buf_hl)
+          text:set(text:content(), M.config.highlights.current_buf)
         end
       else
         buf.texts[1]:set(buf.texts[1]:content(), filename_hl)
@@ -210,14 +395,27 @@ local function initialize_popup()
       end
     end
     buf.display_line = NuiLine(buf.texts)
-    buf.display_line:render(M.popup.bufnr, -1, idx)
+    buf.display_line:render(M.states.popup.bufnr, -1, idx)
   end
-  vim.fn.win_execute(vim.fn.bufwinid(M.popup.bufnr), tostring(M.bufs.idx))
+  vim.fn.win_execute(
+    vim.fn.bufwinid(M.states.popup.bufnr),
+    tostring(M.states.cur_buf_idx)
+  )
 end
 
 --- Setup keymaps and user nvim_create_user_command
 ---@param opts bufSwitcher.Config
 function M.setup(opts)
+  opts = vim.tbl_deep_extend("keep", {}, opts or {})
+  if opts.mode ~= nil then
+    local mode_config = M.modes[opts.mode]
+    if mode_config == nil then
+      mode_config = M.modes.preview
+      opts.mode = "preview"
+    end
+    M.config = vim.tbl_deep_extend("keep", mode_config, M.config)
+  end
+
   M.config = vim.tbl_deep_extend("keep", opts, M.config)
   if M.config.keymaps.enabled then
     if M.config.keymaps.prev then
@@ -238,30 +436,48 @@ function M.setup(opts)
     end
   end
 
-  vim.api.nvim_create_user_command("BufSwitcherNext", M.next_buf, { nargs = 0 })
-  vim.api.nvim_create_user_command("BufSwitcherPrev", M.prev_buf, { nargs = 0 })
+  -- Make sure there are conflicting options
+  if M.config.preview.enabled then
+    M.config.popup.enter = false
+    M.config.popup.focusable = false
+  end
+  if not M.config.popup.focusable then
+    M.config.popup.enter = false
+  end
+
+  vim.api.nvim_create_user_command("BufSwitcherNext", M.next_buf, { nargs = 1 })
+  vim.api.nvim_create_user_command("BufSwitcherPrev", M.prev_buf, { nargs = 1 })
 end
 
---- Map all possible characters so that any keypress will open the selected buffer
+--- Map all possible characters so that any keypress will open the target buffer
 ---@param buf integer
-local function preview_keymaps(buf)
-  local chars = { "<space>", "<esc>" }
+---@param opts {echo: boolean, del_buf: boolean}?
+local function echo_all_keymaps(buf, opts)
+  opts = opts or {}
+  local chars =
+    { "<space>", "<esc>", "<tab>", "<cr>", "<up>", "<down>", "<left>", "<right>" }
   for i = 32, 126, 1 do
     local chr = string.char(i)
     table.insert(chars, chr)
   end
   for _, chr in ipairs(chars) do
     vim.keymap.set("n", chr, function()
-      close_popup(function()
-        chr = vim.api.nvim_replace_termcodes(chr, true, false, true)
-        vim.fn.feedkeys(chr, "m")
-        pcall(vim.api.nvim_buf_delete, buf, { force = true })
-      end)
+      M.close_popup({
+        cb = function()
+          if opts.echo ~= false then
+            chr = vim.api.nvim_replace_termcodes(chr, true, false, true)
+            vim.fn.feedkeys(chr, "m")
+          end
+          if opts.del_buf ~= false then
+            pcall(vim.api.nvim_buf_delete, buf, { force = true })
+          end
+        end,
+      })
     end, { buffer = buf, noremap = true })
   end
 end
 
---- Creates a preview buffer for showing buffers that has not been selected
+--- Creates a preview buffer
 ---@param bufinfo table
 ---@return integer
 local function create_preview_buf(bufinfo)
@@ -278,11 +494,46 @@ local function create_preview_buf(bufinfo)
       vim.bo[buf].syntax = ft
     end
   end
-  if M.config.hooks.before_show_preview then
-    M.config.hooks.before_show_preview(buf, bufinfo.bufnr)
-  end
-  preview_keymaps(buf)
+  echo_all_keymaps(buf)
   return buf
+end
+
+--- Creates and displays the preview buffer
+---@param target_buf table
+local function initialize_preview(target_buf)
+  if M.config.preview.enabled == false then
+    return
+  end
+
+  M.states.preview_bufnr = create_preview_buf(target_buf)
+  if M.config.hooks.before_show_preview then
+    local _, err = pcall(M.config.hooks.before_show_preview, {
+      preview_bufnr = M.states.preview_bufnr,
+      prev_win_id = M.states.prev_win,
+      prev_buf = M.states.prev_buf,
+      target_buf = target_buf,
+    })
+    if err then
+      vim.api.nvim_err_writeln(err)
+    end
+  end
+
+  -- Show the preview buffer
+  vim.api.nvim_set_current_buf(M.states.preview_bufnr)
+  -- no autocmds should be triggered. So LSP's etc won't try to attach in the preview
+  utils.noautocmd(function()
+    if M.config.hooks.after_show_preview then
+      local _, err = pcall(M.config.hooks.after_show_preview, {
+        preview_bufnr = M.states.preview_bufnr,
+        prev_win_id = M.states.prev_win,
+        prev_buf = M.states.prev_buf,
+        target_buf = target_buf,
+      })
+      if err then
+        vim.api.nvim_err_writeln(err)
+      end
+    end
+  end)
 end
 
 -- Hack taken from fzf-lua
@@ -310,8 +561,8 @@ end
 
 --- Reload/refresh recent buffers list
 local function load_buffers()
-  if M.bufs.list == nil then
-    M.bufs.list = {}
+  if M.states.buf_list == nil then
+    M.states.buf_list = {}
     local bufnrs = vim.api.nvim_list_bufs()
     local current_buf = vim.api.nvim_get_current_buf()
     for _, buf in ipairs(bufnrs) do
@@ -319,11 +570,11 @@ local function load_buffers()
       local is_listed = vim.bo[buf].buflisted
       local is_valid_buftype = vim.bo[buf].buftype ~= "nofile"
       if info.name ~= "" and is_valid_buftype and is_listed then
-        table.insert(M.bufs.list, info)
+        table.insert(M.states.buf_list, info)
       end
     end
     -- Sort buffers by lastused with fzf lua hack
-    table.sort(M.bufs.list, function(a, b)
+    table.sort(M.states.buf_list, function(a, b)
       return get_unixtime(a) > get_unixtime(b)
     end)
 
@@ -342,11 +593,11 @@ local function load_buffers()
     end
 
     -- Add file name to buffer object
-    for idx, buf in ipairs(M.bufs.list) do
+    for idx, buf in ipairs(M.states.buf_list) do
       local file_name = string.gsub(buf.name, "(.*/)(.*)", "%2")
       buf.display_id = { filename = file_name, dirname = "", level = 0 }
       if buf.bufnr == current_buf then
-        M.bufs.idx = idx
+        M.states.cur_buf_idx = idx
       end
     end
 
@@ -355,7 +606,7 @@ local function load_buffers()
       local names = {}
       dup = false
       -- Look for buffers with same name
-      for idx, buf in ipairs(M.bufs.list) do
+      for idx, buf in ipairs(M.states.buf_list) do
         local key = buf.display_id.filename .. buf.display_id.dirname
         if names[key] then
           dup = true
@@ -368,7 +619,7 @@ local function load_buffers()
       for _, bufs in pairs(names) do
         if #bufs > 1 then
           for i = 1, #bufs do
-            local buf = M.bufs.list[bufs[i]]
+            local buf = M.states.buf_list[bufs[i]]
             calc_dirname(buf, buf.display_id, buf.display_id.level)
           end
         end
@@ -383,34 +634,17 @@ local function switch(get_buf)
   -- Load existing buffers
   load_buffers()
   -- Save current file name the first time opening switcher
-  if M.bufs.prev_buf == nil then
-    M.bufs.prev_buf = M.bufs.list[M.bufs.idx]
+  if M.states.prev_buf == nil then
+    M.states.prev_buf = M.states.buf_list[M.states.cur_buf_idx]
   end
   -- Save current window the first time opening switcher
-  if M.bufs.prev_win == nil then
-    M.bufs.prev_win = vim.api.nvim_get_current_win()
+  if M.states.prev_win == nil then
+    M.states.prev_win = vim.api.nvim_get_current_win()
   end
 
   local target_buf = get_buf()
-  local pos = vim.api.nvim_buf_get_mark(target_buf.bufnr, '"')
-  -- Preview the target buffer
-  local preview_buf = create_preview_buf(target_buf)
-  -- Show the preview buffer
-  vim.api.nvim_set_current_buf(preview_buf)
-  -- Move cursor to the line number
-  -- no autocmds should be triggered. So LSP's etc won't try to attach in the preview
-  utils.noautocmd(function()
-    if pcall(vim.api.nvim_win_set_cursor, 0, pos) then
-      if M.config.center_preview then
-        vim.api.nvim_win_call(0, function()
-          vim.cmd("norm! zzzv")
-        end)
-      end
-    end
-  end)
-
+  initialize_preview(target_buf)
   initialize_popup()
-  initialize_autocmd()
   initialize_timer()
 end
 
@@ -421,9 +655,9 @@ function M.next_buf(step)
   switch(function()
     -- Buffer list is sorted by lastused, so the next buffer is the previous one
     -- Allow for circular buffer switching
-    local next_idx = math.max((M.bufs.idx + step) % (#M.bufs.list + 1), 1)
-    local next_buf = M.bufs.list[next_idx]
-    M.bufs.idx = next_idx
+    local next_idx = math.max((M.states.cur_buf_idx + step) % (#M.states.buf_list + 1), 1)
+    local next_buf = M.states.buf_list[next_idx]
+    M.states.cur_buf_idx = next_idx
     return next_buf
   end)
 end
@@ -435,12 +669,12 @@ function M.prev_buf(step)
   switch(function()
     -- Buffer list is sorted by lastused, so the prev buffer the next one
     -- Allow for circular buffer switching
-    local prev_idx = M.bufs.idx - step
+    local prev_idx = M.states.cur_buf_idx - step
     if prev_idx < 1 then
-      prev_idx = #M.bufs.list - math.abs(prev_idx)
+      prev_idx = #M.states.buf_list - math.abs(prev_idx)
     end
-    local prev_buf = M.bufs.list[prev_idx]
-    M.bufs.idx = prev_idx
+    local prev_buf = M.states.buf_list[prev_idx]
+    M.states.cur_buf_idx = prev_idx
     return prev_buf
   end)
 end
