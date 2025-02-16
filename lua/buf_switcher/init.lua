@@ -5,8 +5,8 @@ local autocmd_group = "BufSwitcher"
 local M = {
   ---@class bufSwitcher.Config.Keymaps
   ---@field enabled boolean? Enable auto mapping of keys
-  ---@field prev_key string? Keybind to use for switching to previous buffer
-  ---@field next_key string? Keybind to use for switching to next buffer
+  ---@field prev string? Keybind to use for switching to previous buffer. Set to false to disable.
+  ---@field next string? Keybind to use for switching to next buffer. Set to false to disable.
 
   ---@class bufSwitcher.Config
   ---@field timeout integer? Milliseconds to keep popup open before selecting the current buffer to open
@@ -26,8 +26,8 @@ local M = {
     lnum_hl = "DiagnosticInfo",
     keymaps = {
       enabled = true,
-      prev_key = "<C-S-Tab>",
-      next_key = "<C-Tab>",
+      prev = "<C-S-Tab>",
+      next = "<C-Tab>",
     },
     popup_opts = {
       enter = false,
@@ -189,16 +189,26 @@ end
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("keep", opts, M.config)
   if M.config.keymaps.enabled then
-    if M.config.keymaps.prev_key then
-      vim.keymap.set({ "n", "x", "v" }, M.config.keymaps.prev_key, M.prev_file)
+    if M.config.keymaps.prev then
+      vim.keymap.set(
+        { "n", "x", "v" },
+        M.config.keymaps.prev,
+        M.prev_buf,
+        { desc = "Buf Switcher Next" }
+      )
     end
-    if M.config.keymaps.next_key then
-      vim.keymap.set({ "n", "x", "v" }, M.config.keymaps.next_key, M.next_file)
+    if M.config.keymaps.next then
+      vim.keymap.set(
+        { "n", "x", "v" },
+        M.config.keymaps.next,
+        M.next_buf,
+        { desc = "Buf Switcher Prev" }
+      )
     end
   end
 
-  vim.api.nvim_create_user_command("BufSwitcherNext", M.next_file, { nargs = 0 })
-  vim.api.nvim_create_user_command("BufSwitcherPrev", M.prev_file, { nargs = 0 })
+  vim.api.nvim_create_user_command("BufSwitcherNext", M.next_buf, { nargs = 0 })
+  vim.api.nvim_create_user_command("BufSwitcherPrev", M.prev_buf, { nargs = 0 })
 end
 
 --- Creates a preview buffer for showing buffers that has not been selected
