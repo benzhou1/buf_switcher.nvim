@@ -13,7 +13,7 @@ local M = {
   ---@field after_show_selected fun(src_bufnr: integer, dest_bufnr: integer)? Hook to run after showing selected buffer
 
   ---@class bufSwitcher.Config
-  ---@field timeout integer? Milliseconds to keep popup open before selecting the current buffer to open
+  ---@field timeout integer? Milliseconds to keep popup open before selecting the current buffer to open. Set to 0 to disable.
   ---@field filename_hl string? Highlight group for filename
   ---@field dirname_hl string? Highlight group for dirname
   ---@field lnum_hl string? Highlight group for line number
@@ -25,6 +25,7 @@ local M = {
   config = {
     timeout = 1000,
     center_preview = true,
+    disable_autocmds = true,
     current_buf_hl = "Visual",
     filename_hl = "Normal",
     dirname_hl = "Comment",
@@ -102,9 +103,12 @@ local function close_popup()
   end)
 end
 
---- Intialize autocmd to close popup when cursor moves
---- Initlaize a timer to close popup after a certain timeout
-local function initialize_autocmd_timer()
+--- Initlaize autocmd to close popup when cursor moves or text changes
+local function initialize_autocmd()
+  if M.config.disable_autocmds then
+    return
+  end
+
   local autocmd = require("nui.utils.autocmd")
   local event = require("nui.utils.autocmd").event
 
@@ -128,7 +132,14 @@ local function initialize_autocmd_timer()
       close_popup()
     end,
   })
+end
 
+--- Intialize autocmd to close popup when cursor moves
+--- Initlaize a timer to close popup after a certain timeout
+local function initialize_timer()
+  if M.config.timeout == 0 then
+    return
+  end
   if M.timer == nil then
     M.timer = uv.new_timer()
   end
@@ -368,12 +379,10 @@ local function switch(get_buf)
       end
     end
   end)
-  -- vim.cmd(tostring(target_buf.lnum))
 
-  -- Show popup
   initialize_popup()
-  -- Initialize autocmd and timer
-  initialize_autocmd_timer()
+  initialize_autocmd()
+  initialize_timer()
 end
 
 --- Open the next most recent buffer
