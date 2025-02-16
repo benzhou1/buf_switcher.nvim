@@ -242,17 +242,34 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("BufSwitcherPrev", M.prev_buf, { nargs = 0 })
 end
 
+--- Map all possible characters so that any keypress will open the selected buffer
+---@param buf integer
+local function preview_keymaps(buf)
+  local chars = { "<space>", "<esc>" }
+  for i = 32, 126, 1 do
+    local chr = string.char(i)
+    table.insert(chars, chr)
+  end
+  for _, chr in ipairs(chars) do
+    vim.keymap.set("n", chr, function()
+      close_popup(function()
+        chr = vim.api.nvim_replace_termcodes(chr, true, false, true)
+        vim.fn.feedkeys(chr, "m")
+        pcall(vim.api.nvim_buf_delete, buf, { force = true })
+      end)
+    end, { buffer = buf, noremap = true })
+  end
+end
+
 --- Creates a preview buffer for showing buffers that has not been selected
 ---@param bufinfo table
----@return integer?
+---@return integer
 local function create_preview_buf(bufinfo)
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].buftype = "nofile"
   local lines = utils.get_lines({ path = bufinfo.name, buf = bufinfo.bufnr })
-  if not lines then
-    return
-  end
+  assert(lines, "Failed to create preview buffer")
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   local ft = vim.filetype.match({ filename = bufinfo.filename, buf = bufinfo.bufnr or 0 })
   if ft then
@@ -264,6 +281,7 @@ local function create_preview_buf(bufinfo)
   if M.config.hooks.before_show_preview then
     M.config.hooks.before_show_preview(buf, bufinfo.bufnr)
   end
+  preview_keymaps(buf)
   return buf
 end
 
@@ -377,7 +395,6 @@ local function switch(get_buf)
   local pos = vim.api.nvim_buf_get_mark(target_buf.bufnr, '"')
   -- Preview the target buffer
   local preview_buf = create_preview_buf(target_buf)
-  assert(preview_buf, "Failed to create preview buffer")
   -- Show the preview buffer
   vim.api.nvim_set_current_buf(preview_buf)
   -- Move cursor to the line number
