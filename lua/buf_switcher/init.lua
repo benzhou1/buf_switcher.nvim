@@ -14,12 +14,13 @@ local M = {
 
   ---@class bufSwitcher.Config
   ---@field timeout integer? Milliseconds to keep popup open before selecting the current buffer to open. Set to 0 to disable.
+  ---@field center_preview boolean? Whether the screen should be centered when showing preview buffer
+  ---@field disable_autocmds boolean? Disable autocmds for cursor movement and text changes
+  ---@field current_buf_hl? string Highlight group for currently selected line in popup
   ---@field filename_hl string? Highlight group for filename
   ---@field dirname_hl string? Highlight group for dirname
   ---@field lnum_hl string? Highlight group for line number
-  ---@field current_buf_hl? string Highlight group for currently selected line in popup
   ---@field keymaps bufSwitcher.Config.Keymaps? Configure keymaps
-  ---@field center_preview boolean? Whether the screen should be centered when showing preview buffer
   ---@field hooks bufSwitcher.Config.Hooks? Configure hooks
   ---@field popup_opts table? Options for nui popup buffer
   config = {
