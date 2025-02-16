@@ -72,18 +72,20 @@ local M = {
 
 --- Close popup and open the selected buffer
 --- Cleanup state and autocmd
-local function close_popup()
+local function close_popup(cb)
   local autocmd = require("nui.utils.autocmd")
   local target_buf = M.bufs.list[M.bufs.idx]
-  -- Get the current cursor position in the preview buffer
-  local cursor_pos = vim.api.nvim_win_get_cursor(vim.api.nvim_get_current_win())
-  -- Open selected buffer and move cursor to the same position
-  vim.cmd("e " .. target_buf.name .. "|" .. tostring(cursor_pos[1]))
-  vim.fn.setreg("#", M.bufs.prev_name)
+  local pos = vim.api.nvim_win_get_cursor(0)
+  vim.api.nvim_win_call(M.bufs.prev_win, function()
+    vim.cmd("e " .. target_buf.name)
+    pcall(vim.api.nvim_win_set_cursor, 0, pos)
     if M.config.hooks.after_show_selected then
       ---@diagnostic disable-next-line: undefined-field
       M.config.hooks.after_show_selected(M.bufs.prev_buf.bufnr, target_buf.bufnr)
     end
+  end)
+  ---@diagnostic disable-next-line: undefined-field
+  vim.fn.setreg("#", M.bufs.prev_buf.name)
 
   -- Close the popup
   if M.popup then
@@ -102,6 +104,10 @@ local function close_popup()
   pcall(function()
     M.timer:stop()
   end)
+
+  if cb ~= nil then
+    cb()
+  end
 end
 
 --- Initlaize autocmd to close popup when cursor moves or text changes
@@ -368,6 +374,7 @@ local function switch(get_buf)
   end
 
   local target_buf = get_buf()
+  local pos = vim.api.nvim_buf_get_mark(target_buf.bufnr, '"')
   -- Preview the target buffer
   local preview_buf = create_preview_buf(target_buf)
   assert(preview_buf, "Failed to create preview buffer")
@@ -376,7 +383,7 @@ local function switch(get_buf)
   -- Move cursor to the line number
   -- no autocmds should be triggered. So LSP's etc won't try to attach in the preview
   utils.noautocmd(function()
-    if pcall(vim.api.nvim_win_set_cursor, 0, { target_buf.lnum, 0 }) then
+    if pcall(vim.api.nvim_win_set_cursor, 0, pos) then
       if M.config.center_preview then
         vim.api.nvim_win_call(0, function()
           vim.cmd("norm! zzzv")
