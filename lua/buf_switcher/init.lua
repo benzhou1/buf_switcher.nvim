@@ -1,6 +1,7 @@
 local uv = vim.loop or vim.uv
 local path_sep = package.config:sub(1, 1)
 local utils = require("buf_switcher.utils")
+local autocmd_group = "BufSwitcherGroup"
 
 local M = {
   ---@class bufSwitcher.States
@@ -28,6 +29,9 @@ local M = {
       preview = {
         enabled = true,
       },
+      autocmds = {
+        enabled = true,
+      },
       popup = {
         enter = false,
         focusable = false,
@@ -39,6 +43,9 @@ local M = {
         enabled = false,
       },
       preview = {
+        enabled = false,
+      },
+      autocmds = {
         enabled = false,
       },
       popup = {
@@ -53,6 +60,9 @@ local M = {
         value = 300,
       },
       preview = {
+        enabled = false,
+      },
+      autocmds = {
         enabled = false,
       },
       popup = {
@@ -70,20 +80,24 @@ local M = {
 function M.before_show_preview(opts) end
 
 --- Sets preview buffer cursor position and centers the screen
----@param opts bufSwitcher.Config.Hooks.Options
-function M.after_show_preview(opts)
+---@param hook_opts bufSwitcher.Config.Hooks.Options
+---@param opts {center_preview: boolean}?
+function M.after_show_preview(hook_opts, opts)
+  opts = opts or {}
   if M.config.preview.enabled == false then
     return
   end
 
   -- Get cursor position of target buffer
-  local pos = vim.api.nvim_buf_get_mark(opts.target_buf.bufnr, '"')
+  local pos = vim.api.nvim_buf_get_mark(hook_opts.target_buf.bufnr, '"')
   -- Set preview to the same cursor position as target buffer
-  vim.api.nvim_win_set_cursor(opts.prev_win_id, pos)
-  -- Center the preview buffer
-  vim.api.nvim_win_call(opts.prev_win_id, function()
-    vim.cmd("norm! zzzv")
-  end)
+  vim.api.nvim_win_set_cursor(hook_opts.prev_win_id, pos)
+  if opts.center_preview ~= false then
+    -- Center the preview buffer
+    vim.api.nvim_win_call(hook_opts.prev_win_id, function()
+      vim.cmd("norm! zzzv")
+    end)
+  end
 end
 
 --- Saves the current cursor position of the preview buffer
@@ -108,7 +122,7 @@ function M.after_show_target(opts)
   end
 
   -- Set cursor position of target buffer to be the same as preview buffer
-  vim.api.nvim_win_set_cursor(opts.prev_win_id, M.states.preview_pos)
+  pcall(vim.api.nvim_win_set_cursor, opts.prev_win_id, M.states.preview_pos)
   -- Correct alternative buffer
   vim.fn.setreg("#", opts.prev_buf.name)
 end
@@ -152,6 +166,9 @@ end
 ---@class bufSwitcher.Config.Preview
 ---@field enabled boolean? Enable preview buffer
 
+---@class bufSwitcher.Config.Autocmds
+---@field enabled boolean? Enable autocmds for cursor movements
+
 ---@class bufSwitcher.Config.Highlights
 ---@field current_buf string? Highlight group for currently selected line in popup
 ---@field filename string? Highlight group for filename
@@ -181,6 +198,7 @@ end
 ---@class bufSwitcher.Config
 ---@field timeout bufSwitcher.Config.Timeout? Describes the timeout configuration
 ---@field preview bufSwitcher.Config.Preview? Describes the preview configuration
+---@field autocmds bufSwitcher.Config.Autocmds? Describes the autocmds configuration
 ---@field highlights bufSwitcher.Config.Highlights? Describes the highlights configuration
 ---@field keymaps bufSwitcher.Config.Keymaps? Configure keymaps
 ---@field hooks bufSwitcher.Config.Hooks? Configure hooks
@@ -203,6 +221,9 @@ M.config = {
   preview = {
     enabled = true,
   },
+  autocmds = {
+    enabled = true,
+  },
   highlights = {
     current_buf = "Visual",
     filename = "Normal",
@@ -213,7 +234,7 @@ M.config = {
     before_show_preview = M.before_show_preview,
     after_show_preview = M.after_show_preview,
     before_show_target = M.before_show_target,
-    after_show_target = M.after_show_preview,
+    after_show_target = M.after_show_target,
     after_show_popup = M.after_show_popup,
     before_show_popup = M.before_show_popup,
   },
@@ -247,8 +268,17 @@ M.config = {
 
 --- Close popup and open the target buffer
 function M.close_popup(opts)
+  if M.states.buf_list == nil then
+    return
+  end
   opts = opts or {}
   local target_buf = M.states.buf_list[M.states.cur_buf_idx]
+  local autocmd = require("nui.utils.autocmd")
+  -- Clean up autocmds and timeer
+  pcall(autocmd.delete_group, autocmd_group)
+  pcall(function()
+    M.states.timer:stop()
+  end)
 
   if not opts.cancel then
     if M.config.hooks.before_show_target then
@@ -292,13 +322,51 @@ function M.close_popup(opts)
   M.states.prev_buf = nil
   M.states.prev_win = nil
 
-  pcall(function()
-    M.states.timer:stop()
-  end)
-
   if opts.cb ~= nil then
     opts.cb()
   end
+end
+
+--- Initlaize autocmd to close popup when cursor moves or text changes
+local function initialize_autocmd()
+  if M.config.autocmds.enabled == false then
+    return
+  end
+
+  local autocmd = require("nui.utils.autocmd")
+  local event = require("nui.utils.autocmd").event
+  autocmd.create_group(autocmd_group, {})
+
+  -- local i = 1
+  -- -- Need to skip the first 2 event because switching to preview buffer triggers it
+  -- local skip = 1
+  -- -- Any action other than switching buffers means the user has finished selecting
+  -- autocmd.create({
+  --   event.CursorMoved,
+  --   event.CursorMovedI,
+  -- }, {
+  --   group = autocmd_group,
+  --   callback = function()
+  --     if i > skip then
+  --       return M.close_popup()
+  --     end
+  --     i = i + 1
+  --   end,
+  -- }, M.states.preview_bufnr)
+
+  -- Handles when the user switches to another buffer during preview
+  -- In this case cancel the switch because the users intention is to switch to another buffer
+  autocmd.create({
+    event.BufLeave,
+  }, {
+    group = autocmd_group,
+    callback = function()
+      local name = vim.api.nvim_buf_get_name(0)
+      if name then
+        M.close_popup({ cancel = true })
+      end
+    end,
+  }, M.states.preview_bufnr)
 end
 
 --- Initialize a timer to close popup after a certain timeout
@@ -472,8 +540,17 @@ end
 ---@param opts {echo: boolean, del_buf: boolean}?
 local function echo_all_keymaps(buf, opts)
   opts = opts or {}
-  local chars =
-    { "<space>", "<esc>", "<tab>", "<cr>", "<up>", "<down>", "<left>", "<right>" }
+  local chars = {
+    "<space>",
+    "<esc>",
+    "<tab>",
+    "<cr>",
+    "<up>",
+    "<down>",
+    "<left>",
+    "<right>",
+    "<C-^>",
+  }
   for i = 32, 126, 1 do
     local chr = string.char(i)
     table.insert(chars, chr)
@@ -536,10 +613,10 @@ local function initialize_preview(target_buf)
     end
   end
 
-  -- Show the preview buffer
-  vim.api.nvim_set_current_buf(M.states.preview_bufnr)
   -- no autocmds should be triggered. So LSP's etc won't try to attach in the preview
   utils.noautocmd(function()
+    -- Show the preview buffer
+    vim.api.nvim_set_current_buf(M.states.preview_bufnr)
     if M.config.hooks.after_show_preview then
       local _, err = pcall(M.config.hooks.after_show_preview, {
         preview_bufnr = M.states.preview_bufnr,
@@ -662,6 +739,7 @@ local function switch(get_buf)
 
   local target_buf = get_buf()
   initialize_preview(target_buf)
+  initialize_autocmd()
   initialize_popup()
   initialize_timer()
 end
