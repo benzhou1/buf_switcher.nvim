@@ -445,8 +445,22 @@ function M.setup(opts)
     M.config.popup.enter = false
   end
 
-  vim.api.nvim_create_user_command("BufSwitcherNext", M.next_buf, { nargs = 1 })
-  vim.api.nvim_create_user_command("BufSwitcherPrev", M.prev_buf, { nargs = 1 })
+  vim.api.nvim_create_user_command("BufSwitcherNext", function(cmd_opts)
+    local step = 1
+    local arg_step = tonumber(cmd_opts.args)
+    if arg_step ~= nil then
+      step = arg_step
+    end
+    M.next_buf(step)
+  end, { nargs = "?" })
+  vim.api.nvim_create_user_command("BufSwitcherPrev", function(cmd_opts)
+    local step = 1
+    local arg_step = tonumber(cmd_opts.args)
+    if arg_step ~= nil then
+      step = arg_step
+    end
+    M.prev_buf(step)
+  end, { nargs = "?" })
 end
 
 --- Map all possible characters so that any keypress will open the target buffer
