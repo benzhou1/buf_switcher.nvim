@@ -1,4 +1,5 @@
 local uv = vim.loop or vim.uv
+local path_sep = package.config:sub(1, 1)
 local utils = require("buf_switcher.utils")
 
 local M = {
@@ -379,7 +380,10 @@ local function initialize_popup()
       table.insert(buf.texts, NuiText(buf.display_id.filename, filename_hl))
       table.insert(buf.texts, NuiText(":" .. tostring(buf.lnum), lnum_hl))
       if buf.display_id.dirname ~= "" then
-        table.insert(buf.texts, NuiText(" .../" .. buf.display_id.dirname, dirname_hl))
+        table.insert(
+          buf.texts,
+          NuiText(" ..." .. path_sep .. buf.display_id.dirname, dirname_hl)
+        )
       end
     else
       if idx == current_idx then
@@ -597,18 +601,18 @@ local function load_buffers()
     ---@param id table
     ---@param level integer
     local function calc_dirname(buf, id, level)
-      local dirname = string.gsub(buf.name, "(.*/)(.*)", "%1")
-      local parts = vim.split(dirname, "/")
+      local dirname = string.gsub(buf.name, "(.*" .. path_sep .. ")(.*)", "%1")
+      local parts = vim.split(dirname, path_sep)
       local part = parts[#parts - level - 1]
 
-      id.dirname = part .. "/" .. id.dirname
+      id.dirname = part .. path_sep .. id.dirname
       id.level = id.level - 1
       buf.display_id = id
     end
 
     -- Add file name to buffer object
     for idx, buf in ipairs(M.states.buf_list) do
-      local file_name = string.gsub(buf.name, "(.*/)(.*)", "%2")
+      local file_name = string.gsub(buf.name, "(.*" .. path_sep .. ")(.*)", "%2")
       buf.display_id = { filename = file_name, dirname = "", level = 0 }
       if buf.bufnr == current_buf then
         M.states.cur_buf_idx = idx
