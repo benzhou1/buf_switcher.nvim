@@ -196,6 +196,7 @@ end
 ---@field after_show_popup fun(opts: bufSwitcher.Config.Hooks.Options)? Hook to run after showing popup menu
 
 ---@class bufSwitcher.Config
+---@field log_warnings boolean? Log warnings
 ---@field timeout bufSwitcher.Config.Timeout? Describes the timeout configuration
 ---@field preview bufSwitcher.Config.Preview? Describes the preview configuration
 ---@field autocmds bufSwitcher.Config.Autocmds? Describes the autocmds configuration
@@ -214,6 +215,7 @@ end
 ---@type bufSwitcher.Config
 M.config = {
   mode = "preview",
+  log_warnings = false,
   timeout = {
     enabled = true,
     value = 1000,
@@ -697,6 +699,18 @@ local function load_buffers()
       if buf.bufnr == current_buf then
         M.states.cur_buf_idx = idx
       end
+    end
+    if M.states.cur_buf_idx == nil then
+      if M.config.log_warnings then
+        vim.notify(
+          "Could not find current buffer: "
+            .. current_buf
+            .. " : "
+            .. vim.inspect(M.states.buf_list),
+          vim.log.levels.WARN
+        )
+      end
+      M.states.cur_buf_idx = 1
     end
 
     local dup = true
