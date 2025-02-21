@@ -542,7 +542,6 @@ local function echo_all_keymaps(buf, opts)
   opts = opts or {}
   local chars = {
     "<space>",
-    "<esc>",
     "<tab>",
     "<cr>",
     "<up>",
@@ -570,6 +569,10 @@ local function echo_all_keymaps(buf, opts)
       })
     end, { buffer = buf, noremap = true })
   end
+  vim.keymap.set("n", "<esc>", function()
+    vim.api.nvim_win_set_buf(M.states.prev_win, M.states.prev_buf.bufnr)
+    M.close_popup({ cancel = true })
+  end, { buffer = buf, noremap = true })
 end
 
 --- Creates a preview buffer
@@ -656,7 +659,7 @@ end
 
 --- Reload/refresh recent buffers list
 local function load_buffers()
-  if M.states.buf_list == nil then
+  if M.states.buf_list == nil or M.states.cur_buf_idx == nil then
     M.states.buf_list = {}
     local bufnrs = vim.api.nvim_list_bufs()
     local current_buf = vim.api.nvim_get_current_buf()
