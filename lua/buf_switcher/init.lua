@@ -685,7 +685,7 @@ local function load_buffers()
     local function calc_dirname(buf, id, level)
       local dirname = string.gsub(buf.name, "(.*" .. path_sep .. ")(.*)", "%1")
       local parts = vim.split(dirname, path_sep)
-      local part = parts[#parts - level - 1]
+      local part = parts[#parts + level - 1]
 
       id.dirname = part .. path_sep .. id.dirname
       id.level = id.level - 1
